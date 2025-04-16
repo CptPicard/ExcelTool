@@ -290,3 +290,7 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+else:
+    # When imported as a module, this enables poetry's script to work
+    # The entry point in pyproject.toml calls excel_merge:main
+    pass

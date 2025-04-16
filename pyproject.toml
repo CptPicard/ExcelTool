@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "excel-merger"
+version = "0.1.0"
+description = "A tool for merging data from an update Excel file into a master Excel file"
+authors = ["Your Name <your.email@example.com>"]
+readme = "README.md"
+license = "MIT"
+packages = [{include = "excel_merge.py"}]
+
+[tool.poetry.dependencies]
+python = ">=3.9,<4.0"
+pandas = "^2.0.0"
+openpyxl = "^3.1.2"  # Required for Excel file handling
+xlrd = "^2.0.1"  # For older Excel file formats
+
+[tool.poetry.dev-dependencies]
+pytest = "^7.0.0"
+black = "^23.0.0"
+flake8 = "^6.0.0"
+
+[tool.poetry.scripts]
+excel-merger = "excel_merge:main"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
