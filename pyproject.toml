@@ -13,7 +13,7 @@ pandas = "^2.0.0"
 openpyxl = "^3.1.2"  # Required for Excel file handling
 xlrd = "^2.0.1"  # For older Excel file formats
 
-[tool.poetry.dev-dependencies]
+[tool.poetry.group.dev.dependencies]
 pytest = "^7.0.0"
 black = "^23.0.0"
 flake8 = "^6.0.0"
