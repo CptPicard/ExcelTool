@@ -70,6 +70,7 @@ if not duplicate_names.empty:
 
 # Merge update info into master
 updated_rows = 0
+unmatched_entries = []  # Track entries that couldn't be matched to master file
 master_df['Updated'] = False  # Initialize the 'Updated' column
 
 for i, update_row in update_df.iterrows():
@@ -81,6 +82,12 @@ for i, update_row in update_df.iterrows():
     match_count = mask.sum()
     if match_count == 0:
         print(f"[WARN] Row {i}: No match for '{update_row[UPDATE_NAME_FIELD]}' (key: '{key}') in master Excel.")
+        unmatched_entries.append({
+            'row': i,
+            'name': update_row[UPDATE_NAME_FIELD],
+            'key': key,
+            'timestamp': timestamp
+        })
         continue
     elif match_count > 1:
         raise ValueError(f"[ERROR] Row {i}: Multiple matches for '{update_row[UPDATE_NAME_FIELD]}' (key: '{key}') in master Excel.")
@@ -89,35 +96,89 @@ for i, update_row in update_df.iterrows():
 
     # Update master data with update file values
     updated = False
+    updated_fields = []  # Store all updated fields for this person
+    
     for update_field, master_field in FIELD_MAPPINGS.items():
-        if update_field in update_df.columns:  # This check will now work correctly
+        if update_field in update_df.columns:
             # Check if the value is different before updating
             if pd.notna(update_row[update_field]) and master_df.loc[master_index, master_field] != update_row[update_field]:
                 master_df.loc[master_index, master_field] = update_row[update_field]
                 updated = True
-                print(f"[INFO] Row {i}: Updated '{update_row[UPDATE_NAME_FIELD]}' ({key}) - {master_field}: {update_row[update_field]}")
-
-    # Mark row as updated if any changes were made
+                updated_fields.append(f"{master_field}: {update_row[update_field]}")
+    
+    # Mark row as updated if any changes were made and log all updates at once
     if updated:
         master_df.loc[master_index, 'Updated'] = True
         if pd.notna(timestamp):
             master_df.loc[master_index, MASTER_UPDATED_FIELD] = timestamp
         updated_rows += 1  # Increment only if the row was actually updated
+        
+        # Log all field updates for this person in a single line
+        print(f"[INFO] Row {i}: Updated '{update_row[UPDATE_NAME_FIELD]}' ({key}) - {', '.join(updated_fields)}")
 
-# Handle non-updated rows: use existing timestamp from "Päivitys pvm" or "Päivitys pvm2"
+# Handle non-updated rows timestamps:
+# 1. Rows that were updated already have their timestamp from the update file
+# 2. For non-updated rows, keep existing values from päivitys pvm or päivitys pvm2
+# Create a temporary mask for rows that weren't updated
+non_updated_mask = ~master_df['Updated']
+
+# For non-updated rows that have päivitys pvm2, use that value if päivitys pvm is empty
 if 'päivitys pvm2' in master_df.columns:
-    master_df[MASTER_UPDATED_FIELD] = master_df[MASTER_UPDATED_FIELD].fillna(master_df['päivitys pvm2'])
-master_df[MASTER_UPDATED_FIELD] = master_df[MASTER_UPDATED_FIELD].fillna(master_df['päivitys pvm'])
+    # Convert päivitys pvm2 to datetime first to avoid type incompatibility
+    master_df['päivitys pvm2'] = pd.to_datetime(master_df['päivitys pvm2'], errors='coerce')
+    
+    # Only fill empty values in non-updated rows
+    fill_mask = non_updated_mask & pd.isna(master_df[MASTER_UPDATED_FIELD])
+    master_df.loc[fill_mask, MASTER_UPDATED_FIELD] = master_df.loc[fill_mask, 'päivitys pvm2']
 
 # Ensure "Päivitys pvm" is saved as a proper datetime type
 master_df[MASTER_UPDATED_FIELD] = pd.to_datetime(master_df[MASTER_UPDATED_FIELD], errors='coerce')
 
+# --- Clean up data before saving ---
+# Function to properly capitalize names (first letter uppercase, rest lowercase)
+def proper_case(text):
+    if pd.isna(text) or not isinstance(text, str):
+        return text
+    return text.strip().title()
+
+# Function to normalize Finnish phone numbers (convert +358 to 0 and remove dashes)
+def normalize_phone(phone):
+    if pd.isna(phone) or not isinstance(phone, str):
+        return phone
+    phone = phone.strip()
+    # Remove dashes
+    phone = phone.replace('-', '')
+    # Convert international format to local
+    if phone.startswith('+358'):
+        return '0' + phone[4:]
+    return phone
+
+# Apply cleanup to name columns
+master_df[MASTER_FIRSTNAME_FIELD] = master_df[MASTER_FIRSTNAME_FIELD].apply(proper_case)
+master_df[MASTER_LASTNAME_FIELD] = master_df[MASTER_LASTNAME_FIELD].apply(proper_case)
+
+# Apply cleanup to phone number column if it exists
+if 'puhelinnumero' in master_df.columns:
+    master_df['puhelinnumero'] = master_df['puhelinnumero'].apply(normalize_phone)
+
 # Drop unnecessary columns
 columns_to_drop = ['päivitys pvm2'] if 'päivitys pvm2' in master_df.columns else []
-master_df.drop(columns=columns_to_drop + ['full_name_key'], inplace=True)
+columns_to_drop.append('Updated')  # Remove the temporary 'Updated' column
+columns_to_drop.append('full_name_key')
+master_df.drop(columns=columns_to_drop, inplace=True)
 
 # --- Save result ---
 with ExcelWriter(OUTPUT_EXCEL_PATH, datetime_format='YYYY-MM-DD') as writer:
     master_df.to_excel(writer, index=False)
 
 print(f"Merge complete. {updated_rows} rows were updated.")
+
+# Print summary of unmatched entries
+if unmatched_entries:
+    print("\n--- UNMATCHED ENTRIES SUMMARY ---")
+    print(f"Found {len(unmatched_entries)} entries in the update file that couldn't be matched to the master file:")
+    for entry in unmatched_entries:
+        print(f"  Row {entry['row']}: '{entry['name']}' (Timestamp: {entry['timestamp']})")
+    print("These entries require manual review and potential addition to the master file.")
+else:
+    print("All entries in the update file were successfully matched to the master file.")
