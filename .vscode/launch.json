@@ -32,6 +32,24 @@
             "program": "${workspaceFolder}/excel_merge.py",
             "console": "integratedTerminal",
             "args": "${command:pickArgs}"
+        },
+        {
+            "name": "Excel Merger with Poetry (Default files)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/excel_merge.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--master", "Jäsenrekisteri.xlsx",
+                "--update", "Uudet_kevät_2025.xlsx",
+                "--output", "merged_output.xlsx",
+                "--include-extra-columns"
+            ],
+            "pythonPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
         }
     ]
 }

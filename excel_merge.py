@@ -14,6 +14,7 @@ class FieldNames:
     MASTER_ADDRESS = 'katuosoite'
     MASTER_EMAIL = 'sähköposti'
     MASTER_PHONE = 'puhelinnumero'
+    MASTER_POSTAL_CODE = 'postinumero'
     
     # Update file fields
     UPDATE_FULLNAME = 'etu- ja sukunimi'
@@ -21,6 +22,7 @@ class FieldNames:
     UPDATE_ADDRESS = 'kadunnimi ja osoite'
     UPDATE_EMAIL = 'sähköpostiosoite'
     UPDATE_PHONE = 'puhelinnumero'
+    UPDATE_POSTAL_CODE = 'postinumero'
     
     # Common fields
     FULL_NAME_KEY = 'full_name_key'
@@ -276,14 +278,18 @@ class ExcelMerger:
         if FieldNames.MASTER_PHONE in self.master_df.columns:
             self.master_df[FieldNames.MASTER_PHONE] = self.master_df[FieldNames.MASTER_PHONE].apply(self.normalize_phone)
         
+        # Apply formatting to postal code column if it exists
+        if FieldNames.MASTER_POSTAL_CODE in self.master_df.columns:
+            self.master_df[FieldNames.MASTER_POSTAL_CODE] = self.master_df[FieldNames.MASTER_POSTAL_CODE].apply(self.format_postal_code)
+        
         # Drop unnecessary columns
         columns_to_drop = [FieldNames.MASTER_UPDATED_2] if FieldNames.MASTER_UPDATED_2 in self.master_df.columns else []
         columns_to_drop.append(FieldNames.UPDATED_FLAG)  # Remove the temporary 'Updated' column
         columns_to_drop.append(FieldNames.FULL_NAME_KEY)
         self.master_df.drop(columns=columns_to_drop, inplace=True)
         
-        # Standardize column names for better compatibility when reusing as master file
-        self.master_df.columns = [col.strip().title() for col in self.master_df.columns]
+        # Standardize column names with only first letter capitalized
+        self.master_df.columns = [col.strip().capitalize() for col in self.master_df.columns]
 
     def save_result(self):
         """Save the result to an Excel file."""
@@ -326,16 +332,36 @@ class ExcelMerger:
     
     @staticmethod
     def normalize_phone(phone):
-        """Normalize Finnish phone numbers (convert +358 to 0 and remove dashes)."""
+        """Normalize Finnish phone numbers (convert +358 to 0 and remove dashes and spaces)."""
         if pd.isna(phone) or not isinstance(phone, str):
             return phone
         phone = phone.strip()
-        # Remove dashes
-        phone = phone.replace('-', '')
+        # Remove dashes and spaces
+        phone = phone.replace('-', '').replace(' ', '')
         # Convert international format to local
         if phone.startswith('+358'):
             return '0' + phone[4:]
         return phone
+
+    @staticmethod
+    def format_postal_code(postal_code):
+        """Format Finnish postal codes to 5 digits with leading zeros."""
+        if pd.isna(postal_code):
+            return postal_code
+        
+        # Convert to string if it's numeric
+        if isinstance(postal_code, (int, float)):
+            # Convert to string without decimal part if float
+            postal_code = str(int(postal_code))
+            # Pad with zeros if needed
+            return postal_code.zfill(5)
+        
+        # If it's already a string and numeric, pad with zeros
+        if isinstance(postal_code, str) and postal_code.isdigit():
+            return postal_code.zfill(5)
+        
+        # If it's not a numeric string, return as is
+        return postal_code
 
 
 def parse_args():
