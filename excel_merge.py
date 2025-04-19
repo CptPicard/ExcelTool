@@ -19,7 +19,7 @@ class FieldNames:
     # Update file fields
     UPDATE_FULLNAME = 'etu- ja sukunimi'
     UPDATE_TIMESTAMP = 'completion time'
-    UPDATE_ADDRESS = 'kadunnimi ja osoite'
+    UPDATE_ADDRESS = 'kadunnimi ja numero'
     UPDATE_EMAIL = 'sähköpostiosoite'
     UPDATE_PHONE = 'puhelinnumero'
     UPDATE_POSTAL_CODE = 'postinumero'
@@ -28,13 +28,15 @@ class FieldNames:
     FULL_NAME_KEY = 'full_name_key'
     UPDATED_FLAG = 'Updated'
     
+    # Additional field names that appear in either file
+    BIRTH_YEAR = 'syntymävuosi'
+    
     # Field mappings dictionary (update_excel -> master_excel)
     @classmethod
     def get_field_mappings(cls):
         return {
             cls.UPDATE_ADDRESS: cls.MASTER_ADDRESS,
-            cls.UPDATE_EMAIL: cls.MASTER_EMAIL,
-            cls.UPDATE_PHONE: cls.MASTER_PHONE
+            cls.UPDATE_EMAIL: cls.MASTER_EMAIL
         }
 
 
@@ -110,13 +112,37 @@ class ExcelMerger:
                 # Load the specified sheet
                 self.update_df = pd.read_excel(self.update_path, sheet_name=self.update_sheet)
                 print(f"Loaded update file from: {self.update_path}")
-                print(f"Using specified sheet: '{self.update_sheet}'")
+                print(f"Using specified sheet: '{self.update_sheet}'")                
         except Exception as e:
             raise ValueError(f"Error loading update file: {e}")
+
+        # Convert numeric columns that should be integers from float to int
+        self._convert_float_columns_to_int(self.master_df)
+        self._convert_float_columns_to_int(self.update_df)
         
         # Normalize column names to avoid issues with spaces or case sensitivity
         self.master_df.columns = self.master_df.columns.str.strip().str.lower()
         self.update_df.columns = self.update_df.columns.str.strip().str.lower()
+        
+        # DEBUG: Print column names as simple lists for easier inspection
+        master_cols = list(self.master_df.columns)
+        update_cols = list(self.update_df.columns)
+        print("\nDEBUG - Master columns (after normalization):")
+        for i, col in enumerate(master_cols):
+            print(f"  {i}: '{col}'")
+        
+        print("\nDEBUG - Update columns (after normalization):")
+        for i, col in enumerate(update_cols):
+            print(f"  {i}: '{col}'")
+            
+        # DEBUG: Check if specific field names exist in the normalized columns
+        print("\nDEBUG - Checking specific field mappings:")
+        for update_field, master_field in self.field_mappings.items():
+            update_exists = update_field in update_cols
+            master_exists = master_field in master_cols
+            print(f"  Mapping: '{update_field}' -> '{master_field}'")
+            print(f"    Update field exists: {update_exists}")
+            print(f"    Master field exists: {master_exists}")
         
         # Combine first and last name in master for matching
         self.master_df[FieldNames.FULL_NAME_KEY] = (
@@ -134,19 +160,103 @@ class ExcelMerger:
         # Always calculate common columns regardless of include_extra_columns setting
         self.common_columns = set(self.master_df.columns).intersection(set(self.update_df.columns))
         
+        # DEBUG: Print common columns
+        print("\nDEBUG - Common columns:")
+        for col in sorted(self.common_columns):
+            print(f"  '{col}'")
+        
         # Only set up extra columns if the flag is enabled
         if self.include_extra_columns:
-            self.extra_columns = set(self.update_df.columns) - set(self.master_df.columns) - {
-                self.update_name_field, self.update_timestamp_field, FieldNames.FULL_NAME_KEY
+            # Build a set of all columns that should be considered "mapped"
+            # This includes both source and target columns from mappings
+            mapped_source_columns = set()
+            mapped_target_columns = set()
+            
+            for update_field, master_field in self.field_mappings.items():
+                mapped_source_columns.add(update_field)
+                mapped_target_columns.add(master_field)
+            
+            # Columns to exclude from extra columns calculation:
+            # 1. Special columns used internally (name, timestamp, full_name_key)
+            # 2. Source columns in mappings (update fields that map to master fields)
+            # 3. Common columns (columns with identical names in both files)
+            excluded_columns = {
+                self.update_name_field, 
+                self.update_timestamp_field, 
+                FieldNames.FULL_NAME_KEY
             }
+            excluded_columns.update(mapped_source_columns)
+            excluded_columns.update(self.common_columns)
+            
+            # Calculate extra columns as those in update but not in master or excluded
+            self.extra_columns = set(self.update_df.columns) - set(self.master_df.columns) - excluded_columns
+            
+            # DEBUG: Print mapping sets
+            print("\nDEBUG - Mapped source columns:")
+            for col in sorted(mapped_source_columns):
+                print(f"  '{col}'")
+            
+            print("\nDEBUG - Mapped target columns:")
+            for col in sorted(mapped_target_columns):
+                print(f"  '{col}'")
+                
+            # DEBUG: Print excluded columns
+            print("\nDEBUG - Columns excluded from extra columns:")
+            for col in sorted(excluded_columns):
+                print(f"  '{col}'")
             
             if self.extra_columns:
                 print(f"[INFO] Found {len(self.extra_columns)} extra columns in update file that will be added:")
-                for col in self.extra_columns:
-                    print(f"  - {col}")
+                for col in sorted(self.extra_columns):
+                    print(f"  - '{col}'")
                     # Add these columns to the master dataframe
                     self.master_df[col] = None
                     self.added_columns.append(col)
+
+    def _convert_float_columns_to_int(self, df):
+        """Convert float columns that contain only integer values to integer type."""
+        for col in df.columns:
+            # Skip non-numeric columns
+            if not pd.api.types.is_numeric_dtype(df[col]):
+                continue
+                
+            # Skip datetime columns and columns that should remain as dates
+            col_lower = str(col).lower()
+            if (col_lower == FieldNames.MASTER_UPDATED or 
+                col_lower == FieldNames.MASTER_UPDATED_2 or
+                col_lower == FieldNames.UPDATE_TIMESTAMP):
+                print(f"Skipping datetime column '{col}' - keeping as datetime")
+                continue
+                
+            # Special handling for specific columns
+            if FieldNames.BIRTH_YEAR in col_lower:
+                # Convert birth years to integers
+                df[col] = df[col].apply(lambda x: int(x) if pd.notna(x) and isinstance(x, (int, float)) else x)
+                print(f"Converted '{col}' birth year values to integers")
+            elif FieldNames.MASTER_POSTAL_CODE in col_lower:
+                # Convert postal codes to zero-padded strings
+                df[col] = df[col].apply(self.format_postal_code)
+                print(f"Formatted '{col}' postal code values")
+            # General handling for other numeric columns that contain only integers
+            elif df[col].dropna().apply(lambda x: x == int(x) if isinstance(x, (int, float)) else False).all():
+                df[col] = df[col].apply(lambda x: int(x) if pd.notna(x) and isinstance(x, (int, float)) else x)
+                print(f"Converted '{col}' from float to integer")
+
+    @staticmethod
+    def format_value_for_log(value):
+        """Format values appropriately for logging."""
+        if pd.isna(value):
+            return "N/A"
+            
+        # Format integers correctly in logs
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        
+        # Format postal codes correctly in logs
+        if isinstance(value, (int, str)) and str(value).isdigit() and len(str(value)) <= 5:
+            return str(value).zfill(5)
+            
+        return str(value)
 
     def handle_duplicates(self):
         """Handle duplicate names in the update file by keeping the most recent entry."""
@@ -248,25 +358,46 @@ class ExcelMerger:
                     self.master_df.loc[master_index, self.master_updated_field] = timestamp
                 self.updated_rows += 1  # Increment only if the row was actually updated
                 
+                # Format values for display in logs
+                formatted_updates = []
+                for field_update in updated_fields:
+                    field, value = field_update.split(': ', 1)
+                    formatted_value = self.format_value_for_log(update_row[field] if field in update_row else value)
+                    formatted_updates.append(f"{field}: {formatted_value}")
+                
                 # Log all field updates for this person in a single line
-                print(f"[INFO] Row {i}: Updated '{update_row[self.update_name_field]}' ({key}) - {', '.join(updated_fields)}")
+                print(f"[INFO] Row {i}: Updated '{update_row[self.update_name_field]}' ({key}) - {', '.join(formatted_updates)}")
 
     def handle_timestamps(self):
         """Handle timestamps for non-updated rows."""
         # Create a temporary mask for rows that weren't updated
         non_updated_mask = ~self.master_df[FieldNames.UPDATED_FLAG]
         
+        # Ensure timestamps are in datetime format before processing
+        # Convert timestamp fields to datetime if they're not already
+        self.master_df[self.master_updated_field] = pd.to_datetime(
+            self.master_df[self.master_updated_field], errors='coerce')
+            
         # For non-updated rows that have päivitys pvm2, use that value if päivitys pvm is empty
         if FieldNames.MASTER_UPDATED_2 in self.master_df.columns:
             # Convert päivitys pvm2 to datetime first to avoid type incompatibility
-            self.master_df[FieldNames.MASTER_UPDATED_2] = pd.to_datetime(self.master_df[FieldNames.MASTER_UPDATED_2], errors='coerce')
+            self.master_df[FieldNames.MASTER_UPDATED_2] = pd.to_datetime(
+                self.master_df[FieldNames.MASTER_UPDATED_2], errors='coerce')
             
             # Only fill empty values in non-updated rows
             fill_mask = non_updated_mask & pd.isna(self.master_df[self.master_updated_field])
             self.master_df.loc[fill_mask, self.master_updated_field] = self.master_df.loc[fill_mask, FieldNames.MASTER_UPDATED_2]
         
         # Ensure "Päivitys pvm" is saved as a proper datetime type
-        self.master_df[self.master_updated_field] = pd.to_datetime(self.master_df[self.master_updated_field], errors='coerce')
+        self.master_df[self.master_updated_field] = pd.to_datetime(
+            self.master_df[self.master_updated_field], errors='coerce')
+            
+        # Debug: Print timestamp column types
+        print("\nDEBUG - Timestamp column types after processing:")
+        if self.master_updated_field in self.master_df.columns:
+            print(f"  {self.master_updated_field}: {self.master_df[self.master_updated_field].dtype}")
+        if FieldNames.MASTER_UPDATED_2 in self.master_df.columns:
+            print(f"  {FieldNames.MASTER_UPDATED_2}: {self.master_df[FieldNames.MASTER_UPDATED_2].dtype}")
 
     def clean_data(self):
         """Clean and standardize data before saving."""
