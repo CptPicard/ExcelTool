@@ -17,7 +17,7 @@ poetry run excel-merger --master Jäsenrekisteri.xlsx --update Uudet_tiedot.xlsx
 
 # Or activate the virtual environment and run directly
 poetry shell
-excel-merger --master Jäsenrekisteri.xlsx --update Uudet_tiedot.xlsx --output merged_output.xlsx
+excel-merger --master Input.xlsx --update New_Data.xlsx --output Merged_Output.xlsx
 ```
 
 For more options:
